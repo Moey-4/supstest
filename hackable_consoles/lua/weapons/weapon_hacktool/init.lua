@@ -1,46 +1,58 @@
-AddCSLuaFile()
+AddCSLuaFile("cl_init.lua")
+AddCSLuaFile("shared.lua")
+
 include("shared.lua")
 
-util.AddNetworkString("StartHackingAttempt")
-util.AddNetworkString("OpenHackingMinigame")
+util.AddNetworkString("StartHackingMinigame")
 util.AddNetworkString("HackingMinigameResult")
+util.AddNetworkString("OpenHackControlMenu")
+util.AddNetworkString("SendConsoleProps")
 
-net.Receive("StartHackingAttempt", function(_, ply)
-    local ent = net.ReadEntity()
+function SWEP:PrimaryAttack()
+    local ply = self:GetOwner()
+    local tr = ply:GetEyeTrace()
+    local ent = tr.Entity
 
-    if not IsValid(ply) or not ply:IsPlayer() then return end
-    if not IsValid(ent) or ent:GetClass() ~= "ent_hack_console" then return end
-    if ent:GetNWBool("IsHacked") then return end
-    if ply:GetPos():DistToSqr(ent:GetPos()) > 10000 then return end
-
-    -- Store hack target temporarily on the player
-    ply.HackingTarget = ent
-
-    -- Send minigame trigger to client
-    net.Start("OpenHackingMinigame")
-    net.Send(ply)
-
-    -- Optional: emit start sound
-    ply:EmitSound("buttons/button17.wav")
-end)
+    if IsValid(ent) and ent:GetClass() == "ent_hack_console" then
+        net.Start("StartHackingMinigame")
+        net.WriteEntity(ent)
+        net.Send(ply)
+    else
+        ply:ChatPrint("No hackable console targeted.")
+    end
+end
 
 net.Receive("HackingMinigameResult", function(_, ply)
-    if not IsValid(ply) or not ply:IsPlayer() then return end
     local success = net.ReadBool()
-    local ent = ply.HackingTarget
-
+    local ent = net.ReadEntity()
     if not IsValid(ent) or ent:GetClass() ~= "ent_hack_console" then return end
-    if ent:GetNWBool("IsHacked") then return end
-    if ply:GetPos():DistToSqr(ent:GetPos()) > 10000 then return end
 
-    if success then
-        ent:SetColor(Color(0, 255, 0))
-        ent:SetNWBool("IsHacked", true)
-        ply:EmitSound("buttons/button15.wav")
+    if success and ent.LinkedProps then
+        for _, prop in ipairs(ent.LinkedProps) do
+            if IsValid(prop) then
+                prop:SetNoDraw(true)
+                prop:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
+            end
+        end
+        ent.IsHacked = true
+        ent.HackedBy = ply
+        ply:ChatPrint("Console hacked successfully.")
     else
-        ply:EmitSound("buttons/button10.wav")
+        ply:ChatPrint("Hacking failed.")
     end
+end)
 
-    -- Clear target
-    ply.HackingTarget = nil
+net.Receive("OpenHackControlMenu", function(_, ply)
+    local ent = net.ReadEntity()
+    if not IsValid(ent) or ent:GetClass() ~= "ent_hack_console" then return end
+    if ent.HackedBy ~= ply then return end
+
+    local linkedProps = ent.LinkedProps or {}
+    net.Start("SendConsoleProps")
+    net.WriteEntity(ent)
+    net.WriteUInt(#linkedProps, 8)
+    for _, prop in ipairs(linkedProps) do
+        net.WriteEntity(prop)
+    end
+    net.Send(ply)
 end)
